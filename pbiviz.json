@@ -1,0 +1,23 @@
+{
+  "visual": {
+    "name": "calendarSlicer",
+    "displayName": "Calendar Slicer",
+    "guid": "CalendarSlicerHamzaMemon4F3F6C88",
+    "visualClassName": "Visual",
+    "version": "1.0.0.0",
+    "description": "Calendar slicer with year/month/day picker.",
+    "supportUrl": "https://your-support-url.example.com",
+    "gitHubUrl": "https://github.com/hamzaworkshere/Calendar_Slicer_PBI"
+  },
+  "apiVersion": "5.2.0",
+  "author": {
+    "name": "Hamza Memon",
+    "email": "ameerhamza.memon@nielseniq.com"
+  },
+  "assets": {
+    "icon": "assets/icon.png"
+  },
+  "style": "style/visual.less",
+  "capabilities": "capabilities.json",
+  "stringResources": []
+}

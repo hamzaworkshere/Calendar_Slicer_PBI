@@ -1,0 +1,9 @@
+# Power BI visuals build artifacts
+.tmp/
+dist/
+
+# Node and editor
+node_modules/
+npm-debug.log*
+.vscode/
+.DS_Store

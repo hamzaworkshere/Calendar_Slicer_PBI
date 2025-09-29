@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES5",
+    "module": "commonjs",
+    "declaration": false,
+    "sourceMap": true,
+    "outDir": "./dist",
+    "strict": false,
+
+    "lib": [
+      "ES5",
+      "DOM",
+      "ES2015.Collection",
+      "ES2015.Iterable"
+    ],
+
+    "skipLibCheck": true
+  },
+  "files": [
+    "src/visual.ts",
+    "types/powerbi-api-shim.d.ts"
+  ]
+}
