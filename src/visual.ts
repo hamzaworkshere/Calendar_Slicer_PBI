@@ -5,8 +5,10 @@ import IVisual = powerbi.extensibility.visual.IVisual;
 import VisualConstructorOptions = powerbi.extensibility.visual.VisualConstructorOptions;
 import VisualUpdateOptions = powerbi.extensibility.visual.VisualUpdateOptions;
 import IVisualHost = powerbi.extensibility.visual.IVisualHost;
+
 import DataView = powerbi.DataView;
 import ISelectionId = powerbi.extensibility.ISelectionId;
+import ISelectionManager = powerbi.extensibility.ISelectionManager;
 
 type ViewMode = 'day' | 'month' | 'year';
 
@@ -97,7 +99,11 @@ export class Visual implements IVisual {
   private minDataKey: number | null = null;
   private maxDataKey: number | null = null;
 
+  // Kept for potential future Filter API usage (not required by Selection API)
   private filterTarget: { table: string; column: string } | null = null;
+
+  // Selection API manager (drives cross-filtering)
+  private selectionManager: ISelectionManager;
 
   constructor(options: VisualConstructorOptions) {
     this.host = options.host;
@@ -119,6 +125,9 @@ export class Visual implements IVisual {
     root.appendChild(this.footerEl);
     options.element.appendChild(root);
 
+    // Selection manager for cross-filtering
+    this.selectionManager = this.host.createSelectionManager();
+
     // Clear selection when clicking outside (if stickySelection = false)
     root.addEventListener('click', (e) => {
       if (!this.selectionSettings.stickySelection && e.target === root) this.clearSelection();
@@ -133,19 +142,19 @@ export class Visual implements IVisual {
     this.render();
   }
 
-  // -----------------------------
+  // --------------------------
   // Settings / Data
-  // -----------------------------
+  // --------------------------
 
   private readSettings(dv?: DataView) {
-    const objects: any = dv?.metadata?.objects ?? {} as any;
+    const objects: any = dv?.metadata?.objects ?? ({} as any);
     const cal = (objects['calendarSettings'] ?? {}) as any;
     const hdr = (objects['headerSettings'] ?? {}) as any;
     const sel = (objects['selectionSettings'] ?? {}) as any;
     const rng = (objects['dateRange'] ?? {}) as any;
     const itm = (objects['itemSettings'] ?? {}) as any;
 
-    this.settings.startOfWeek = (cal.startOfWeek as ('Sunday'|'Monday')) ?? this.settings.startOfWeek;
+    this.settings.startOfWeek = (cal.startOfWeek as ('Sunday' | 'Monday')) ?? this.settings.startOfWeek;
     this.settings.showWeekNumbers = (cal.showWeekNumbers !== undefined) ? !!cal.showWeekNumbers : this.settings.showWeekNumbers;
     this.settings.otherMonthFade = (cal.otherMonthFade !== undefined) ? !!cal.otherMonthFade : this.settings.otherMonthFade;
     this.settings.showDOWHeader = (cal.showDOWHeader !== undefined) ? !!cal.showDOWHeader : this.settings.showDOWHeader;
@@ -176,7 +185,7 @@ export class Visual implements IVisual {
     if (!s) return null;
     const m = /^\s*(\d{4})\-(\d{2})\-(\d{2})\s*$/.exec(s);
     if (!m) return null;
-    const d = new Date(Date.UTC(parseInt(m[1],10), parseInt(m[2],10)-1, parseInt(m[3],10)));
+    const d = new Date(Date.UTC(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10)));
     return isNaN(d.getTime()) ? null : d;
   }
 
@@ -198,19 +207,26 @@ export class Visual implements IVisual {
       return;
     }
 
-    const cat = dv.categorical.categories[0];
+    // Accept multiple bound categories (e.g., Date Hierarchy). Prefer a true dateTime column;
+    // otherwise fall back to the last category (usually the Day level).
+    const cats = dv.categorical.categories || [];
+    let cat = cats[0];
+    if (cats.length > 1) {
+      const preferred = cats.find(c => (c.source as any)?.type?.dateTime);
+      cat = preferred || cats[cats.length - 1];
+    }
 
-    // Derive filter target table/column from queryName
+    // Derive filter target table/column from queryName (useful if you later re-enable Filter API)
     const qn = (cat?.source as any)?.queryName;
     if (typeof qn === 'string') {
       const dot = qn.lastIndexOf('.');
-      if (dot > 0) this.filterTarget = { table: qn.substring(0, dot), column: qn.substring(dot+1) };
+      if (dot > 0) this.filterTarget = { table: qn.substring(0, dot), column: qn.substring(dot + 1) };
     }
 
     const values = (cat.values as any[]) ?? [];
-    for (let i=0; i<values.length; i++) {
+    for (let i = 0; i < values.length; i++) {
       const v = values[i];
-      if (v==null) continue;
+      if (v == null) continue;
 
       let d: Date | null = null;
       if (v instanceof Date) {
@@ -231,8 +247,8 @@ export class Visual implements IVisual {
       this.identitiesByKey.set(key, selId);
       this.selectableKeys.add(key);
 
-      if (this.minDataKey===null || key < this.minDataKey) this.minDataKey = key;
-      if (this.maxDataKey===null || key > this.maxDataKey) this.maxDataKey = key;
+      if (this.minDataKey === null || key < this.minDataKey) this.minDataKey = key;
+      if (this.maxDataKey === null || key > this.maxDataKey) this.maxDataKey = key;
     }
   }
 
@@ -244,9 +260,9 @@ export class Visual implements IVisual {
     root.classList.toggle('no-fade-other-month', !this.settings.otherMonthFade);
   }
 
-  // -----------------------------
+  // --------------------------
   // Rendering
-  // -----------------------------
+  // --------------------------
 
   private render() {
     // Header
@@ -255,8 +271,8 @@ export class Visual implements IVisual {
 
     // Grid
     this.gridEl.innerHTML = '';
-    if (this.viewMode==='day') this.renderDayGrid();
-    else if (this.viewMode==='month') this.renderMonthGrid();
+    if (this.viewMode === 'day') this.renderDayGrid();
+    else if (this.viewMode === 'month') this.renderMonthGrid();
     else this.renderYearGrid();
 
     // Footer
@@ -267,23 +283,23 @@ export class Visual implements IVisual {
     this.headerEl.innerHTML = '';
 
     const left = document.createElement('div');
-    left.className='nav';
+    left.className = 'nav';
 
     const prevBtn = document.createElement('button');
-    prevBtn.title='Previous';
-    prevBtn.textContent='<';
-    prevBtn.onclick=()=>{
-      if(this.viewMode==='day') this.shiftMonth(-1);
-      else if(this.viewMode==='month') this.shiftYear(-1);
+    prevBtn.title = 'Previous';
+    prevBtn.textContent = '<';
+    prevBtn.onclick = () => {
+      if (this.viewMode === 'day') this.shiftMonth(-1);
+      else if (this.viewMode === 'month') this.shiftYear(-1);
       else this.shiftYear(-12);
     };
 
     const nextBtn = document.createElement('button');
-    nextBtn.title='Next';
-    nextBtn.textContent='>';
-    nextBtn.onclick=()=>{
-      if(this.viewMode==='day') this.shiftMonth(1);
-      else if(this.viewMode==='month') this.shiftYear(1);
+    nextBtn.title = 'Next';
+    nextBtn.textContent = '>';
+    nextBtn.onclick = () => {
+      if (this.viewMode === 'day') this.shiftMonth(1);
+      else if (this.viewMode === 'month') this.shiftYear(1);
       else this.shiftYear(12);
     };
 
@@ -291,41 +307,41 @@ export class Visual implements IVisual {
     left.appendChild(nextBtn);
 
     const title = document.createElement('div');
-    title.className='title';
-    title.style.cursor='pointer';
-    title.style.fontSize=(this.header.fontSize+2)+'px';
+    title.className = 'title';
+    title.style.cursor = 'pointer';
+    title.style.fontSize = (this.header.fontSize + 2) + 'px';
 
-    if (this.header?.title && this.header.title.trim().length>0) {
+    if (this.header?.title && this.header.title.trim().length > 0) {
       title.textContent = this.header.title;
     } else {
-      if (this.viewMode==='day') title.textContent = `${this.monthName(this.cursorMonth)} ${this.cursorYear}`;
-      else if (this.viewMode==='month') title.textContent = `${this.cursorYear}`;
-      else title.textContent = `${Math.floor(this.cursorYear/12)*12} – ${Math.floor(this.cursorYear/12)*12+11}`;
+      if (this.viewMode === 'day') title.textContent = `${this.monthName(this.cursorMonth)} ${this.cursorYear}`;
+      else if (this.viewMode === 'month') title.textContent = `${this.cursorYear}`;
+      else title.textContent = `${Math.floor(this.cursorYear / 12) * 12} – ${Math.floor(this.cursorYear / 12) * 12 + 11}`;
     }
 
-    title.onclick = ()=>{
-      if(this.viewMode==='day') this.viewMode='month';
-      else if(this.viewMode==='month') this.viewMode='year';
-      else this.viewMode='day';
+    title.onclick = () => {
+      if (this.viewMode === 'day') this.viewMode = 'month';
+      else if (this.viewMode === 'month') this.viewMode = 'year';
+      else this.viewMode = 'day';
       this.render();
     };
 
     const right = document.createElement('div');
-    right.className='nav';
+    right.className = 'nav';
 
     const modeBtn = document.createElement('button');
-    modeBtn.textContent=this.viewMode.toUpperCase();
-    modeBtn.title='Change view';
-    modeBtn.onclick=()=>{
-      this.viewMode = this.viewMode==='day' ? 'month' : this.viewMode==='month' ? 'year' : 'day';
+    modeBtn.textContent = this.viewMode.toUpperCase();
+    modeBtn.title = 'Change view';
+    modeBtn.onclick = () => {
+      this.viewMode = this.viewMode === 'day' ? 'month' : this.viewMode === 'month' ? 'year' : 'day';
       this.render();
     };
     right.appendChild(modeBtn);
 
     if (this.header.showClear) {
       const clearBtn = document.createElement('button');
-      clearBtn.textContent='Clear';
-      clearBtn.onclick=()=> this.clearSelection();
+      clearBtn.textContent = 'Clear';
+      clearBtn.onclick = () => this.clearSelection();
       right.appendChild(clearBtn);
     }
 
@@ -336,91 +352,91 @@ export class Visual implements IVisual {
 
   private renderFooter() {
     const total = this.selectedKeys.size;
-    const label = total===0 ? 'No dates selected' : `${total} date${total>1?'s':''} selected`;
+    const label = total === 0 ? 'No dates selected' : `${total} date${total > 1 ? 's' : ''} selected`;
     this.footerEl.innerHTML = `<div>${label}</div><div>Tip: Ctrl/Cmd for multi, Shift for range</div>`;
   }
 
-  private monthName(m:number){ return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m]; }
-  private shiftMonth(delta:number){ let m=this.cursorMonth+delta,y=this.cursorYear; while(m<0){m+=12;y-=1;} while(m>11){m-=12;y+=1;} this.cursorMonth=m; this.cursorYear=y; this.render(); }
-  private shiftYear(delta:number){ this.cursorYear += delta; this.render(); }
+  private monthName(m: number) { return ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][m]; }
+  private shiftMonth(delta: number) { let m = this.cursorMonth + delta, y = this.cursorYear; while (m < 0) { m += 12; y -= 1; } while (m > 11) { m -= 12; y += 1; } this.cursorMonth = m; this.cursorYear = y; this.render(); }
+  private shiftYear(delta: number) { this.cursorYear += delta; this.render(); }
 
-  private getStartOfWeekOffset(dow0Sunday:number){
-    if(this.settings.startOfWeek==='Monday'){ return dow0Sunday===0?6:dow0Sunday-1; }
+  private getStartOfWeekOffset(dow0Sunday: number) {
+    if (this.settings.startOfWeek === 'Monday') { return dow0Sunday === 0 ? 6 : dow0Sunday - 1; }
     return dow0Sunday;
   }
 
   private getISOWeek(d: Date): number {
     const date = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-    const day = (date.getUTCDay()||7);
+    const day = (date.getUTCDay() || 7);
     date.setUTCDate(date.getUTCDate() + 4 - day);
-    const yearStart = new Date(Date.UTC(date.getUTCFullYear(),0,1));
-    const diffDays = Math.floor((date.getTime()-yearStart.getTime())/86400000)+1;
-    return Math.ceil(diffDays/7);
+    const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+    const diffDays = Math.floor((date.getTime() - yearStart.getTime()) / 86400000) + 1;
+    return Math.ceil(diffDays / 7);
   }
 
-  private renderDayGrid(){
-    const y=this.cursorYear, m=this.cursorMonth;
-    const first=new Date(Date.UTC(y,m,1));
-    const firstDOW=first.getUTCDay();
-    const offset=this.getStartOfWeekOffset(firstDOW);
+  private renderDayGrid() {
+    const y = this.cursorYear, m = this.cursorMonth;
+    const first = new Date(Date.UTC(y, m, 1));
+    const firstDOW = first.getUTCDay();
+    const offset = this.getStartOfWeekOffset(firstDOW);
 
     // Optional min/max clamps (kept to respect settings; not used for selectability)
     let minKey: number | null = this.minDataKey;
     let maxKey: number | null = this.maxDataKey;
-    const cfgMin=this.parseISODate(this.dateRange.minDate);
-    const cfgMax=this.parseISODate(this.dateRange.maxDate);
-    const cfgMinKey = cfgMin? this.atUTC(cfgMin): null;
-    const cfgMaxKey = cfgMax? this.atUTC(cfgMax): null;
+    const cfgMin = this.parseISODate(this.dateRange.minDate);
+    const cfgMax = this.parseISODate(this.dateRange.maxDate);
+    const cfgMinKey = cfgMin ? this.atUTC(cfgMin) : null;
+    const cfgMaxKey = cfgMax ? this.atUTC(cfgMax) : null;
 
-    if (!this.dateRange.respectDataRange){
+    if (!this.dateRange.respectDataRange) {
       minKey = cfgMinKey; maxKey = cfgMaxKey;
     } else {
-      if(cfgMinKey!==null) minKey = (minKey!==null)? Math.max(minKey, cfgMinKey): cfgMinKey;
-      if(cfgMaxKey!==null) maxKey = (maxKey!==null)? Math.min(maxKey, cfgMaxKey): cfgMaxKey;
+      if (cfgMinKey !== null) minKey = (minKey !== null) ? Math.max(minKey, cfgMinKey) : cfgMinKey;
+      if (cfgMaxKey !== null) maxKey = (maxKey !== null) ? Math.min(maxKey, cfgMaxKey) : cfgMaxKey;
     }
 
     const container = document.createElement('div');
-    container.className='grid-days';
+    container.className = 'grid-days';
     container.classList.toggle('show-weeknums', this.settings.showWeekNumbers);
 
     // Optional DOW header row
     if (this.settings.showDOWHeader) {
-      if(this.settings.showWeekNumbers){
-        const wk=document.createElement('div');
-        wk.className='weeknum';
-        wk.textContent='Wk';
+      if (this.settings.showWeekNumbers) {
+        const wk = document.createElement('div');
+        wk.className = 'weeknum';
+        wk.textContent = 'Wk';
         container.appendChild(wk);
       }
-      const dows = this.settings.startOfWeek==='Monday'
-        ? ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
-        : ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-      for (let i=0;i<dows.length;i++){
-        const e=document.createElement('div');
-        e.className='dow';
-        e.textContent=dows[i];
+      const dows = this.settings.startOfWeek === 'Monday'
+        ? ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+        : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      for (let i = 0; i < dows.length; i++) {
+        const e = document.createElement('div');
+        e.className = 'dow';
+        e.textContent = dows[i];
         container.appendChild(e);
       }
     }
 
     // We always render 6 rows x 7 days (42 cells) for a full month grid
-    const totalCells=42;
-    const firstCellDate=new Date(Date.UTC(y,m,1 - offset));
+    const totalCells = 42;
+    const firstCellDate = new Date(Date.UTC(y, m, 1 - offset));
 
-    for(let i=0;i<totalCells;i++){
+    for (let i = 0; i < totalCells; i++) {
       const dt = new Date(Date.UTC(
         firstCellDate.getUTCFullYear(),
         firstCellDate.getUTCMonth(),
-        firstCellDate.getUTCDate()+i
+        firstCellDate.getUTCDate() + i
       ));
 
       const k = Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate());
-      const inMonth = (dt.getUTCMonth()===m);
+      const inMonth = (dt.getUTCMonth() === m);
 
       // If week numbers enabled, add week number at the start of each row
-      if(this.settings.showWeekNumbers && (i%7===0)){
-        const wn=document.createElement('div');
-        wn.className='weeknum';
-        wn.textContent=String(this.getISOWeek(dt));
+      if (this.settings.showWeekNumbers && (i % 7 === 0)) {
+        const wn = document.createElement('div');
+        wn.className = 'weeknum';
+        wn.textContent = String(this.getISOWeek(dt));
         container.appendChild(wn);
       }
 
@@ -428,7 +444,7 @@ export class Visual implements IVisual {
       const isDataDate = this.selectableKeys.has(k);
 
       const cell = document.createElement('div');
-      cell.className = 'cell' + (inMonth?'':' other-month') + (isDataDate? ' selectable':' disabled');
+      cell.className = 'cell' + (inMonth ? '' : ' other-month') + (isDataDate ? ' selectable' : ' disabled');
       cell.textContent = String(dt.getUTCDate());
 
       // Item styling
@@ -441,10 +457,12 @@ export class Visual implements IVisual {
         if (this.items.boldSelected) (cell as HTMLElement).style.fontWeight = '700';
       }
 
-      if(isDataDate){
-        cell.onclick = (ev)=> this.handleClickDate(k, ev as MouseEvent);
+      if (isDataDate) {
+        cell.onclick = (ev) => this.handleClickDate(k, ev as MouseEvent);
         (cell as HTMLElement).tabIndex = 0;
-        cell.onkeydown = (ev: KeyboardEvent)=>{ if(ev.key==='Enter' || ev.key===' '){ ev.preventDefault(); this.handleClickDate(k, ev as any as MouseEvent);} };
+        cell.onkeydown = (ev: KeyboardEvent) => {
+          if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); this.handleClickDate(k, ev as any as MouseEvent); }
+        };
       }
 
       container.appendChild(cell);
@@ -453,73 +471,73 @@ export class Visual implements IVisual {
     this.gridEl.appendChild(container);
   }
 
-  private renderMonthGrid(){
-    const container=document.createElement('div');
-    container.className='grid-months';
-    for(let m=0;m<12;m++){
-      const cell=document.createElement('div');
-      cell.className='cell selectable';
+  private renderMonthGrid() {
+    const container = document.createElement('div');
+    container.className = 'grid-months';
+    for (let m = 0; m < 12; m++) {
+      const cell = document.createElement('div');
+      cell.className = 'cell selectable';
       (cell as HTMLElement).style.fontSize = `${this.items.fontSize}px`;
-      cell.textContent=this.monthName(m);
-      cell.onclick=()=>{ this.cursorMonth=m; this.viewMode='day'; this.render(); };
+      cell.textContent = this.monthName(m);
+      cell.onclick = () => { this.cursorMonth = m; this.viewMode = 'day'; this.render(); };
       container.appendChild(cell);
     }
     this.gridEl.appendChild(container);
   }
 
-  private renderYearGrid(){
-    const container=document.createElement('div');
-    container.className='grid-years';
-    const base=Math.floor(this.cursorYear/12)*12;
-    for(let i=0;i<12;i++){
-      const y=base+i;
-      const cell=document.createElement('div');
-      cell.className='cell selectable';
+  private renderYearGrid() {
+    const container = document.createElement('div');
+    container.className = 'grid-years';
+    const base = Math.floor(this.cursorYear / 12) * 12;
+    for (let i = 0; i < 12; i++) {
+      const y = base + i;
+      const cell = document.createElement('div');
+      cell.className = 'cell selectable';
       (cell as HTMLElement).style.fontSize = `${this.items.fontSize}px`;
-      cell.textContent=String(y);
-      cell.onclick=()=>{ this.cursorYear=y; this.viewMode='month'; this.render(); };
+      cell.textContent = String(y);
+      cell.onclick = () => { this.cursorYear = y; this.viewMode = 'month'; this.render(); };
       container.appendChild(cell);
     }
     this.gridEl.appendChild(container);
   }
 
-  // -----------------------------
-  // Selection & Filtering
-  // -----------------------------
+  // --------------------------
+  // Selection & Clearing
+  // --------------------------
 
-  private handleClickDate(key:number, ev: MouseEvent){
+  private handleClickDate(key: number, ev: MouseEvent) {
     const multiKey = this.selectionSettings.multiSelect && (ev.ctrlKey || ev.metaKey);
-    const rangeKey = this.selectionSettings.rangeSelect && ev.shiftKey && this.lastClickedKey!=null;
+    const rangeKey = this.selectionSettings.rangeSelect && ev.shiftKey && this.lastClickedKey != null;
 
-    if(rangeKey){
+    if (rangeKey) {
       const a = (this.lastClickedKey as number);
       const start = key < a ? key : a;
-      const end   = key < a ? a   : key;
+      const end = key < a ? a : key;
 
       const keys: number[] = [];
       // Walk day by day and collect ONLY data-present dates
       let cursor = new Date(start);
-      const endDate=new Date(end);
-      while(this.atUTC(cursor) <= this.atUTC(endDate)){
+      const endDate = new Date(end);
+      while (this.atUTC(cursor) <= this.atUTC(endDate)) {
         const k = this.atUTC(cursor);
         if (this.selectableKeys.has(k)) keys.push(k);
-        cursor = new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth(), cursor.getUTCDate()+1));
+        cursor = new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth(), cursor.getUTCDate() + 1));
       }
 
-      this.applyFilterForKeys(keys, true);
+      this.applySelectionForKeys(keys, true);
       this.lastClickedKey = key;
       this.render();
       return;
     }
 
-    if(multiKey){
-      if(this.selectedKeys.has(key)) this.selectedKeys.delete(key);
+    if (multiKey) {
+      if (this.selectedKeys.has(key)) this.selectedKeys.delete(key);
       else this.selectedKeys.add(key);
-      this.applyFilterForKeys(this.setToArray(this.selectedKeys), true);
+      this.applySelectionForKeys(this.setToArray(this.selectedKeys), true);
     } else {
       this.selectedKeys.clear();
       this.selectedKeys.add(key);
-      this.applyFilterForKeys([key], false);
+      this.applySelectionForKeys([key], false);
     }
 
     this.lastClickedKey = key;
@@ -532,36 +550,19 @@ export class Visual implements IVisual {
     return arr;
   }
 
-  private applyFilterForKeys(keys: number[], additive: boolean){
-    if(!this.filterTarget) return;
-
-    if(!additive){
-      this.selectedKeys.clear();
-      for (let i=0;i<keys.length;i++) this.selectedKeys.add(keys[i]);
-    } else {
-      for (let i=0;i<keys.length;i++) this.selectedKeys.add(keys[i]);
-    }
-
-    // Convert to Date[] for Basic 'In' filter
-    const tmp:number[] = this.setToArray(this.selectedKeys);
-    const values = tmp.map(k=> new Date(k));
-
-    const filter: any = {
-      $schema: "http://powerbi.com/product/schema#basic",
-      target: { table: this.filterTarget.table, column: this.filterTarget.column },
-      operator: "In",
-      values
-    };
-
-    this.host.applyJsonFilter(filter, "general", "filter", powerbi.FilterAction.merge);
+  // Selection API: select identities for keys; this drives cross-filtering in the report.
+  private applySelectionForKeys(keys: number[], multi: boolean) {
+    const ids = keys
+      .map(k => this.identitiesByKey.get(k))
+      .filter(Boolean) as ISelectionId[];
+    this.selectionManager.select(ids, multi);
+    this.selectedKeys = new Set(keys);
   }
 
-  private clearSelection(){
+  private clearSelection() {
     this.selectedKeys.clear();
-    this.lastClickedKey=null;
-    if(this.filterTarget){
-      this.host.applyJsonFilter(null, "general", "filter", powerbi.FilterAction.remove);
-    }
+    this.lastClickedKey = null;
+    this.selectionManager.clear();
     this.render();
   }
 }
