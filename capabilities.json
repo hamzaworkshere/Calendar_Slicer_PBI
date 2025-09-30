@@ -3,13 +3,18 @@
   "dataRoles": [
     {
       "name": "date",
-      "kind": "Grouping",
       "displayName": "Date",
-      "description": "Bind to your Date table [Date] column."
+      "kind": "Grouping",
+      "preferredTypes": [{ "dateTime": true }],
+      "description": "Bind your Calendar[Date] or the Date Hierarchy."
     }
   ],
   "dataViewMappings": [
     {
+      "conditions": [
+        { "date": { "min": 1, "max": 1 } },   // Single Date column
+        { "date": { "min": 2, "max": 4 } }    // Date Hierarchy (up to 4 levels)
+      ],
       "categorical": {
         "categories": {
           "for": { "in": "date" },
@@ -19,6 +24,14 @@
     }
   ],
   "objects": {
+    "general": {
+      "displayName": "General",
+      "properties": {
+        "filter":     { "type": { "filter": true } },
+        "selfFilter": { "type": { "filter": { "selfFilter": true } } }
+      }
+    },
+
     "calendarSettings": {
       "displayName": "Calendar",
       "properties": {
@@ -32,22 +45,24 @@
           }
         },
         "showWeekNumbers": { "displayName": "Show week numbers", "type": { "bool": true } },
-        "showDOWHeader":  { "displayName": "Show day-of-week header", "type": { "bool": true } },
-        "otherMonthFade": { "displayName": "Fade other-month days", "type": { "bool": true } }
+        "showDOWHeader":   { "displayName": "Show day-of-week header", "type": { "bool": true } },
+        "otherMonthFade":  { "displayName": "Fade other-month days", "type": { "bool": true } }
       }
     },
+
     "headerSettings": {
       "displayName": "Header & Colors",
       "properties": {
-        "showHeader":       { "displayName": "Show header", "type": { "bool": true } },
-        "title":            { "displayName": "Title", "type": { "text": true } },
-        "accentColor":      { "displayName": "Accent color", "type": { "fill": { "solid": { "color": true } } } },
-        "textColor":        { "displayName": "Text color", "type": { "fill": { "solid": { "color": true } } } },
-        "headerBackground": { "displayName": "Header background", "type": { "fill": { "solid": { "color": true } } } },
-        "fontSize":         { "displayName": "Font size", "type": { "formatting": { "fontSize": true } } },
-        "showClear":        { "displayName": "Show clear button", "type": { "bool": true } }
+        "showHeader":      { "displayName": "Show header", "type": { "bool": true } },
+        "title":           { "displayName": "Title", "type": { "text": true } },
+        "accentColor":     { "displayName": "Accent color", "type": { "fill": { "solid": { "color": true } } } },
+        "textColor":       { "displayName": "Text color", "type": { "fill": { "solid": { "color": true } } } },
+        "headerBackground":{ "displayName": "Header background", "type": { "fill": { "solid": { "color": true } } } },
+        "fontSize":        { "displayName": "Font size", "type": { "formatting": { "fontSize": true } } },
+        "showClear":       { "displayName": "Show clear button", "type": { "bool": true } }
       }
     },
+
     "itemSettings": {
       "displayName": "Items",
       "properties": {
@@ -57,14 +72,16 @@
         "boldSelected":  { "displayName": "Bold selected", "type": { "bool": true } }
       }
     },
+
     "selectionSettings": {
       "displayName": "Selection",
       "properties": {
-        "multiSelect":     { "displayName": "Enable multi-select", "type": { "bool": true } },
-        "rangeSelect":     { "displayName": "Shift+Click range select", "type": { "bool": true } },
-        "stickySelection": { "displayName": "Sticky selection (no clear on outside click)", "type": { "bool": true } }
+        "multiSelect":    { "displayName": "Enable multi-select", "type": { "bool": true } },
+        "rangeSelect":    { "displayName": "Shift+Click range select", "type": { "bool": true } },
+        "stickySelection":{ "displayName": "Sticky selection (no clear on outside click)", "type": { "bool": true } }
       }
     },
+
     "dateRange": {
       "displayName": "Date range",
       "properties": {
@@ -74,6 +91,7 @@
       }
     }
   },
+
   "suppressDefaultTitle": true,
   "supportsHighlight": false
 }
