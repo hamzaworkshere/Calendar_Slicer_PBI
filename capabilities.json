@@ -5,7 +5,6 @@
       "name": "date",
       "displayName": "Date",
       "kind": "Grouping",
-      "preferredTypes": [{ "dateTime": true }],
       "description": "Bind your Calendar[Date] or the Date Hierarchy."
     }
   ],
@@ -39,8 +38,8 @@
           "displayName": "Start of week",
           "type": {
             "enumeration": [
-              { "value": "Sunday", "displayName": "Sunday" },
-              { "value": "Monday", "displayName": "Monday" }
+              { "value": "Sunday" },
+              { "value": "Monday" }
             ]
           }
         },
